@@ -6,8 +6,11 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.TextView
+import androidx.concurrent.futures.CallbackToFutureAdapter
 import androidx.lifecycle.Observer
 import androidx.work.*
+import com.google.common.util.concurrent.ListenableFuture
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "MainActivity"
@@ -33,6 +36,32 @@ class DownloadTask(context: Context, workPram: WorkerParameters) : Worker(contex
     }
 }
 
+//处理异步返回结果的的任务
+class MyLabelTask(context: Context, workPram: WorkerParameters) :
+    ListenableWorker(context, workPram) {
+    override fun startWork(): ListenableFuture<Result> {
+        return CallbackToFutureAdapter.getFuture {
+            //里面执行异步任务
+            Executors.newSingleThreadExecutor().execute {
+                Thread.sleep(3000)
+                when (getCallbackResult(200)) {
+                    "ok" -> it.set(Result.success(workDataOf("key" to "suc")))
+                    else -> it.setException(Throwable("error"))
+                }
+            }
+
+            it.addCancellationListener({
+                Log.i(TAG, "startWork: 下载任务取消了...")
+            }, Executors.newSingleThreadExecutor())
+        }
+    }
+
+    private fun getCallbackResult(code: Int): String = when (code) {
+        200 -> "ok"
+        else -> "error"
+    }
+}
+
 val ca = Constraints.Builder()
     .setRequiredNetworkType(NetworkType.CONNECTED)
     .build()
@@ -44,6 +73,9 @@ val firstRequest = OneTimeWorkRequestBuilder<UploadTask>()
 val secondRequest = OneTimeWorkRequestBuilder<DownloadTask>()
     .setConstraints(ca)
     .setInitialDelay(5, TimeUnit.SECONDS)
+    .build()
+val myLabelTask = OneTimeWorkRequestBuilder<MyLabelTask>()
+    .setConstraints(ca)
     .build()
 
 class MainActivity : AppCompatActivity() {
@@ -60,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         WorkManager.getInstance(this)
             .beginWith(firstRequest)
             .then(secondRequest)
+            .then(myLabelTask)//此请求回调结果内部执行异步任务
             .enqueue()
 
         WorkManager.getInstance(this).getWorkInfoByIdLiveData(secondRequest.id)
